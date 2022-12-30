@@ -155,7 +155,8 @@ data <- data |>
            case_when(
              Title %in% c("Major", "Sir", "Col", "Don", "Jonkheer", "Capt") ~ "Mr", 
              Title %in% c("Mlle", "Mme", "Ms") ~ "Miss", 
-             Title %in% c("Lady", "Countess", "Dona") ~ "Mrs"
+             Title %in% c("Lady", "Countess", "Dona") ~ "Mrs", 
+             TRUE ~ Title
            )
   )
 ```
@@ -329,6 +330,7 @@ summary(log_mod2)
 log_mod2
 
 ```
+
 
 Now, let's try using elastic net regression.
 
