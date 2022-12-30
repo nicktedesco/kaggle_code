@@ -407,7 +407,7 @@ NOTE: this might seem stupid, but I made submissions for each of the five models
 
 ### Predictions
 
-```{r log_mod2 predictions}
+```{r}
 
 #| label: log_mod2 predictions
 
@@ -437,7 +437,7 @@ nnet_output <-
   
 ```
 
-```{r xgbTree_mod1 predictions}
+```{r}
 
 #| label: xgbTree_mod1 predictions
 
