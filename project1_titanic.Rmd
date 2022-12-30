@@ -1,0 +1,374 @@
+---
+title: "Project 1 - Titanic"
+author: "Nick Tedesco"
+date: "2022-12-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Package and Data Loading
+
+```{r}
+
+#| label: packages
+
+library(tidyverse)
+library(caret)
+library(dplyr)
+library(ggplot2)
+
+```
+
+```{r}
+
+#| label: train data
+
+train <- read.csv('train.csv')
+
+head(train)
+
+```
+
+```{r}
+
+#| label: test data
+
+test <- read.csv('test.csv')
+
+head(test)
+
+```
+
+## Preprocessing
+
+First, let's process our variables to make sure they're ready for analysis. We will begin by concatenating the train and test data for joint preprocessing.
+
+```{r}
+
+#| label: train test join
+
+## define train/test identification variable
+train$train <- "yes"
+test$train <- "no"
+
+## extract outcome variable from training dataset
+train.Y <- train$Survived
+train <- train %>% select(-Survived)
+
+data <- rbind(train, test)
+
+```
+
+After inspecting the data, it seems as if "Name", "Cabin", and "Ticket" are relatively unimportant for our analysis. For the purpose of this project, we can assume that name and cabin don't hold very relevant information for predicting survival likelihood. However, in a more complex analysis, we might perform feature engineering to extract important information from these variables (i.e., marital status or social class from name, cabin location from cabin). 
+
+```{r}
+
+#| label: remove unimportant variables
+
+data <- data %>% select(-c(Name, Cabin, Ticket))
+
+```
+
+Let's take a look at the distribution of missing values. 
+
+```{r}
+
+#| label: missing values
+
+colSums(is.na(data)) / nrow(data)
+
+```
+
+To address the missing values, we will replace them with the median of their respective variable. 
+
+```{r}
+
+#| label: missing value imputation
+
+missing_var <- c("Age", "Fare")
+
+for(var in missing_var) {
+  data[is.na(data[, var]), var] <- median(data[, var], na.rm = TRUE)
+}
+
+colSums(is.na(data))
+
+```
+
+Next, let's factorize the relevant variables 
+
+```{r}
+
+#| label: factorize X variables
+
+factor_var <- c("Pclass", "Sex", "Embarked")
+
+for(var in factor_var) {
+  data[, var] <- factor(data[, var])
+}
+
+head(data)
+
+```
+
+```{r factorize outcome}
+
+train.Y <- factor(ifelse(train.Y == 0, "no", "yes"), levels = c("no", "yes"))
+
+```
+
+Finally, let's split our data back into the training and testing sets. 
+
+```{r train test split}
+
+train <- data[data$train == "yes", ] |> 
+  select(-train) |> 
+  cbind(train.Y) |> 
+  rename(Survived = train.Y)
+test <- data[data$train == "no", ] |> 
+  select(-train)
+
+```
+
+Now we're ready to move onto our analysis.
+
+## Exploratory Data Analysis
+
+Let's look at each variable summary, as grouped by the outcome variable. 
+
+```{r summary stats by outcome}
+
+train |> 
+  group_by(Survived) |> 
+  summarise(Pclass_1 = nrow(train[Pclass == "1", ]) / nrow(train), 
+            Pclass_2 = nrow(train[Pclass == "2", ]) / nrow(train), 
+            Pclass_3 = nrow(train[Pclass == "3", ]) / nrow(train), 
+            Sex_male = nrow(train[Sex == "male", ]) / nrow(train), 
+            Sex_female = nrow(train[Sex == "female", ]) / nrow(train), 
+            Age = mean(Age), 
+            SibSp = mean(SibSp), 
+            Parch = mean(Parch), 
+            Fare = mean(Fare), 
+            Embarked_S = nrow(train[Embarked == "S", ]) / nrow(train),
+            Embarked_Q = nrow(train[Embarked == "Q", ]) / nrow(train),
+            Embarked_C = nrow(train[Embarked == "C", ]) / nrow(train))
+
+```
+
+It looks like Pclass, sex, parch, and fare greatly differ between the two survival classes. We will test this theory when we begin our modeling. 
+
+Next, let's look at some scatter plots of the continuous inputs...
+
+```{r age vs fare}
+
+train |> 
+  ggplot() + 
+  geom_point(aes(x = Age, y = Fare, color = Survived))
+
+```
+
+There doesn't appear to be an apparent interaction between age and fare. 
+
+Now, let's look at SibSp vs. Parch...
+
+```{r SibSp vs Parch}
+
+train |> 
+  ggplot() + 
+  geom_point(aes(x = SibSp, y = Parch, color = Survived), alpha = 0.3)
+
+```
+
+Interestingly, it seems like we have a higher concentration of survival == 1 for low to moderate values of both SibSp and Parch. We will examine this potential interaction during our modeling. 
+
+Finally, let's check for outliers among our continuous variables.
+
+```{r}
+
+#| label: checking for outliers
+
+train %>%
+  select(c(Age, Fare)) %>%
+  pivot_longer(cols = c(Age, Fare), names_to = "Variable") |> 
+  ggplot(aes(y = value)) + 
+  geom_boxplot() + 
+  facet_wrap(~Variable, scales = "free")
+
+```
+
+Looks like we have quite a few outliers... we will ignore them for now. 
+
+Let's move on to modeling. 
+
+## Statistical Modeling
+
+First, let's define our resampling scheme.
+
+```{r}
+
+#| label: my_trControl
+
+my_trControl <- trainControl(method = "repeatedcv", number = 5, repeats = 2)
+
+```
+
+We will begin by fitting a few different logistic regression models. 
+
+### Logistic Regression
+
+```{r}
+
+#| label: log_mod1
+
+set.seed(15213)
+
+log_mod1 <- train(Survived ~ .*. + I(Fare^2) + I(Age^2), 
+                  data = train %>% select(-PassengerId), 
+                  preProcess = c("center", "scale"),
+                  trControl = my_trControl, 
+                  method = "glm", 
+                  family = binomial(link = "logit"),
+                  metric = "Accuracy")
+
+summary(log_mod1)
+log_mod1
+
+```
+
+```{r}
+
+#| label: log_mod2
+
+set.seed(15213)
+
+log_mod2 <- train(Survived ~ Pclass + Sex + Age + SibSp, 
+                  data = train %>% select(-PassengerId), 
+                  trControl = my_trControl, 
+                  method = "glm", 
+                  family = binomial(link = "logit"),
+                  metric = "Accuracy")
+
+summary(log_mod2)
+log_mod2
+
+```
+
+```{r}
+
+#| label: log_mod3
+
+set.seed(15213)
+
+log_mod3 <- train(Survived ~ Pclass + Sex + Age + SibSp*Parch, 
+                  data = train %>% select(-PassengerId), 
+                  trControl = my_trControl, 
+                  method = "glm", 
+                  family = binomial(link = "logit"),
+                  metric = "Accuracy")
+
+summary(log_mod3)
+log_mod3
+
+```
+
+Now, let's try using neural networks.
+
+### Neural Networks
+
+```{r}
+
+#| label: nnet_mod1
+
+set.seed(15213)
+
+nnet_mod1 <- train(Survived ~ Pclass + Sex + Age + SibSp, 
+                   data = train %>% select(-PassengerId), 
+                   preProcess = c("center", "scale"),
+                   trControl = my_trControl, 
+                   method = "nnet", 
+                   metric = "Accuracy")
+
+summary(nnet_mod1)
+nnet_mod1
+
+```
+
+The neural network did not result in a substantial increase in cross validated accuracy. Next, let's try xgBoost.
+
+### xgBoost
+
+```{r}
+
+#| label: xgbTree_mod1
+
+set.seed(15213)
+
+xgbTree_mod1 <- train(Survived ~ .*., 
+                      data = train %>% select(-PassengerId), 
+                      preProcess = c("center", "scale"),
+                      trControl = my_trControl, 
+                      method = "xgbTree", 
+                      metric = "Accuracy")
+
+summary(xgbTree_mod1)
+xgbTree_mod1
+
+```
+
+### Predictions
+
+```{r log_mod1 predictions}
+
+#| label: log_mod1 predictions
+
+pred_log_mod1 <- predict(log_mod1, newdata = test, type = "prob")
+
+log_output <- 
+  tibble(
+    PassengerId = test$PassengerId,
+    Survived = ifelse(pred_log_mod1$yes < 0.5, 0, 1)
+)
+  
+  
+```
+
+```{r}
+
+#| label: nnet_mod1 predictions
+
+pred_nnet_mod1 <- predict(nnet_mod1, newdata = test, type = "prob")
+
+nnet_output <- 
+  tibble(
+    PassengerId = test$PassengerId,
+    Survived = ifelse(pred_nnet_mod1$yes < 0.5, 0, 1)
+)
+  
+  
+```
+
+```{r xgbTree_mod1 predictions}
+
+#| label: xgbTree_mod1 predictions
+
+pred_xgbTree_mod1 <- predict(xgbTree_mod1, newdata = test, type = "prob")
+
+xgbTree_output <- 
+  tibble(
+    PassengerId = test$PassengerId,
+    Survived = ifelse(pred_xgbTree_mod1$yes < 0.5, 0, 1)
+)
+  
+  
+```
+
+```{r}
+
+#| label: write_csv
+
+write.csv(xgbTree_output, file = "/Users/nick/Documents/Data Science/Kaggle/Project 1 - Titanic/titanic_predictions.csv", row.names = FALSE)
+
+```
