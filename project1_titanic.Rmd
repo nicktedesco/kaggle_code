@@ -9,8 +9,6 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## test 2
-
 ## Package and Data Loading
 
 ```{r}
@@ -28,9 +26,9 @@ library(ggplot2)
 
 #| label: train data
 
-train <- read.csv('train.csv')
+train <- read.csv('train.csv', na = "")
 
-head(train)
+glimpse(train)
 
 ```
 
@@ -38,15 +36,22 @@ head(train)
 
 #| label: test data
 
-test <- read.csv('test.csv')
+test <- read.csv('test.csv', na = "")
 
-head(test)
+glimpse(test)
 
 ```
 
+Our initial inspection of the data reveals a few interesting points...
+- there are a few variables which are seemingly useless for our analysis (ticket, cabin, name)
+- however, we may be able to extract an individual's title from their name, or perhaps their relative location on the ship from their cabin
+- we have to deal with missing values
+
+Let's start by preprocessing our data. This will include dealing with missing values, looking for and addressing outliers, and some feature engineering.
+
 ## Preprocessing
 
-First, let's process our variables to make sure they're ready for analysis. We will begin by concatenating the train and test data for joint preprocessing.
+We'll start by joining our training and testing data for joint preprocessing, and dropping the ticket variable. 
 
 ```{r}
 
@@ -64,17 +69,17 @@ data <- rbind(train, test)
 
 ```
 
-After inspecting the data, it seems as if "Name", "Cabin", and "Ticket" are relatively unimportant for our analysis. For the purpose of this project, we can assume that name and cabin don't hold very relevant information for predicting survival likelihood. However, in a more complex analysis, we might perform feature engineering to extract important information from these variables (i.e., marital status or social class from name, cabin location from cabin). 
-
 ```{r}
 
-#| label: remove unimportant variables
+#| label: remove ticket variable
 
-data <- data %>% select(-c(Name, Cabin, Ticket))
+data <- data %>% select(-Ticket)
 
 ```
 
-Let's take a look at the distribution of missing values. 
+### Missing Values
+
+Next, let's take a look at the distribution of missing values. 
 
 ```{r}
 
@@ -84,48 +89,179 @@ colSums(is.na(data)) / nrow(data)
 
 ```
 
-To address the missing values, we will replace them with the median of their respective variable. 
+The proportion of missing values for Cabin is too high for imputation, so we will simply remove this variable. 
 
 ```{r}
+#| label: drop Cabin variable
 
-#| label: missing value imputation
-
-missing_var <- c("Age", "Fare")
-
-for(var in missing_var) {
-  data[is.na(data[, var]), var] <- median(data[, var], na.rm = TRUE)
-}
-
-colSums(is.na(data))
-
+data <- data %>% select(-Cabin)
 ```
 
-Next, let's factorize the relevant variables 
+Fare and Embarked have extremely low missing value proportions. As long as they aren't in the testing dataset, we can simply drop these rows. 
+
+```{r}
+#| label: closer look at Fare and Embarked
+
+data[is.na(data$Fare) | is.na(data$Embarked), ]
+```
+
+As shown by the "train" indicator variable, the two rows that contain missing values for Embarked are in the training set. Therefore, we can drop these rows. In order to drop the entire row, we have to join back the training set outcome (Survived) before we drop these rows. 
+
+```{r}
+#| label: drop rows with missing Embarked
+
+train <- data[data$train == "yes", ]
+test <- data[data$train == "no", ]
+
+train$Survived <- train.Y
+
+train <- train[!is.na(train$Embarked), ]
+
+train.Y <- train$Survived
+
+train <- train |> 
+  select(-Survived)
+
+data <- rbind(train, test)
+```
+
+Unfortunately, the row with a missing value for Fare is in the test dataset - therefore, we cannot drop it. Instead, we will perform missing value imputation (here, we'll use the median to avoid the influence of outliers). Since we have a ticket class variable (Pclass), it would make sense to group median fare by ticket class. 
+
+```{r}
+#| label: missing value imputation for Fare
+
+unique_pclass <- unique(data$Pclass)
+
+for(class in unique_pclass){
+  data[is.na(data$Fare) & data$Pclass == class, "Fare"] <- median(data[data$Pclass == class, "Fare"], na.rm = TRUE)
+}
+```
+
+Finally, let's consider age. Even if all the observations with missing values for age were within the training set, dropping these rows would result in losing a large chunk of our data. Therefore, we will perform missing value imputation for age. 
+
+The overall mean or median of age is likely a poor estimate of a given passenger's age. We have the Name variable, which seems to contain each passenger's title (ex: Master, Mr, Dr). Therefore, it makes sense to group our age imputation by title. Here, we will use the mean (instead of the median) because the groupings will likely contain a small number of rows, which would suggest that the median might be a poor representation of a given group's age. 
+
+Let's start by creating a Title variable. We will use a collapsed version to limit the number of unique titles.
+
+```{r}
+#| label: creating Title variable
+
+## use gsub to take advantage of the fact that each title ends with a period
+data$Title <- gsub("\\..*|.*, |the ", "", data$Name)
+
+## collapse titles 
+data %>% 
+  mutate(Title = 
+           case_when(
+             Title %in% c("Major", "Sir", "Col", "Don", "Jonkheer", "Capt") ~ "Mr", 
+             Title %in% c("Mlle", "Mme", "Ms") ~ "Miss", 
+             Title %in% c("Lady", "Countess", "Dona") ~ "Mrs"
+           )
+  )
+```
+
+Now, let's perform missing value imputation by title group.
+
+```{r}
+#| label: missing value imputation for Age
+
+unique_title <- unique(data$Title)
+
+for(title in unique_title){
+  data[is.na(data$Age) & data$Title == title, "Age"] <- mean(data[data$Title == title, "Age"], na.rm = TRUE)
+}
+```
+
+Finally, let's check to make sure we've addressed all the missing values. 
+
+```{r}
+#| label: missing values 2 
+
+colSums(is.na(data)) / nrow(data)
+```
+
+### Checking for Outliers
+
+Next, we will check our continuous variables (Age, Fare) for any potential outliers.
+
+```{r}
+data |> 
+  pivot_longer(cols = c(Age, Fare), names_to = "Column") |> 
+  ggplot() + 
+  geom_boxplot(aes(y = value)) + 
+  facet_wrap(~Column, scales = "free")
+```
+
+It looks like we don't have any crazy outliers for Age, but we do have a single obvious outlier for Fare that should be removed. In order to drop the entire row, we have to join back the training set outcome (Survived) before our filter.
+
+```{r}
+#| label: removing Fare outlier
+
+train <- data[data$train == "yes", ]
+test <- data[data$train == "no", ]
+
+train$Survived <- train.Y
+
+train <- train |> 
+  filter(Fare < 300)
+
+train.Y <- train$Survived
+
+train <- train |> 
+  select(-Survived)
+
+data <- rbind(train, test)
+```
+
+### Feature Engineering
+
+Finally, let's perform some feature engineering. Considering the context of the Titanic, we know that children were more likely to survive. Therefore, let's create an indicator variable for child status.
+
+```{r}
+#| is.child indicator
+
+data <- data |> 
+  mutate(is.child = ifelse(Age < 16, "yes", "no"))
+```
+
+We also have some interesting variables in our dataset that could indicate family size (Parch and SibSp). Let's create a variable for family size. We will create a categorical variable to represent family size as small, medium, or large. We will also create another variable, is.alone, to indicate whether or not the given passenger is alone (i.e., has a family size of 1)
+
+```{r}
+#| family.size variable
+
+data <- data |> 
+  mutate(
+    family.size = Parch + SibSp + 1, 
+    family.size.cat = 
+      case_when(
+        family.size < 4 ~ "small", 
+        family.size < 8 ~ "medium", 
+        TRUE ~ "large"
+      ),
+    is.alone = ifelse(family.size == 1, "yes", "no")
+  )
+```
+
+### Final Preprocessing
+
+Finally, let's drop the variables we aren't interested in anymore, factorize any relevant variables, and split the data back into the training and testing sets. We also have to make sure that our outcome variable isn't numeric. 
 
 ```{r}
 
-#| label: factorize X variables
+#| label: final preprocessing
 
-factor_var <- c("Pclass", "Sex", "Embarked")
+## first, drop variables we aren't interested in anymore
+data <- data |> 
+  select(-c(Name, SibSp, Parch, Title, family.size))
+
+## next, factorize the relevant variables
+factor_var <- c("Pclass", "Sex", "Embarked", "is.child", "is.alone", "family.size.cat")
 
 for(var in factor_var) {
   data[, var] <- factor(data[, var])
 }
 
-head(data)
-
-```
-
-```{r factorize outcome}
-
-train.Y <- factor(ifelse(train.Y == 0, "no", "yes"), levels = c("no", "yes"))
-
-```
-
-Finally, let's split our data back into the training and testing sets. 
-
-```{r train test split}
-
+## split data back into training and testing sets
 train <- data[data$train == "yes", ] |> 
   select(-train) |> 
   cbind(train.Y) |> 
@@ -133,77 +269,13 @@ train <- data[data$train == "yes", ] |>
 test <- data[data$train == "no", ] |> 
   select(-train)
 
-```
-
-Now we're ready to move onto our analysis.
-
-## Exploratory Data Analysis
-
-Let's look at each variable summary, as grouped by the outcome variable. 
-
-```{r summary stats by outcome}
-
-train |> 
-  group_by(Survived) |> 
-  summarise(Pclass_1 = nrow(train[Pclass == "1", ]) / nrow(train), 
-            Pclass_2 = nrow(train[Pclass == "2", ]) / nrow(train), 
-            Pclass_3 = nrow(train[Pclass == "3", ]) / nrow(train), 
-            Sex_male = nrow(train[Sex == "male", ]) / nrow(train), 
-            Sex_female = nrow(train[Sex == "female", ]) / nrow(train), 
-            Age = mean(Age), 
-            SibSp = mean(SibSp), 
-            Parch = mean(Parch), 
-            Fare = mean(Fare), 
-            Embarked_S = nrow(train[Embarked == "S", ]) / nrow(train),
-            Embarked_Q = nrow(train[Embarked == "Q", ]) / nrow(train),
-            Embarked_C = nrow(train[Embarked == "C", ]) / nrow(train))
+## make sure outcome variable isn't numeric
+train <- train |> 
+  mutate(Survived = ifelse(Survived == 1, "yes", "no"))
 
 ```
 
-It looks like Pclass, sex, parch, and fare greatly differ between the two survival classes. We will test this theory when we begin our modeling. 
-
-Next, let's look at some scatter plots of the continuous inputs...
-
-```{r age vs fare}
-
-train |> 
-  ggplot() + 
-  geom_point(aes(x = Age, y = Fare, color = Survived))
-
-```
-
-There doesn't appear to be an apparent interaction between age and fare. 
-
-Now, let's look at SibSp vs. Parch...
-
-```{r SibSp vs Parch}
-
-train |> 
-  ggplot() + 
-  geom_point(aes(x = SibSp, y = Parch, color = Survived), alpha = 0.3)
-
-```
-
-Interestingly, it seems like we have a higher concentration of survival == 1 for low to moderate values of both SibSp and Parch. We will examine this potential interaction during our modeling. 
-
-Finally, let's check for outliers among our continuous variables.
-
-```{r}
-
-#| label: checking for outliers
-
-train %>%
-  select(c(Age, Fare)) %>%
-  pivot_longer(cols = c(Age, Fare), names_to = "Variable") |> 
-  ggplot(aes(y = value)) + 
-  geom_boxplot() + 
-  facet_wrap(~Variable, scales = "free")
-
-```
-
-Looks like we have quite a few outliers... we will ignore them for now. 
-
-Let's move on to modeling. 
+Now we're ready to move onto modeling.
 
 ## Statistical Modeling
 
@@ -227,7 +299,7 @@ We will begin by fitting a few different logistic regression models.
 
 set.seed(15213)
 
-log_mod1 <- train(Survived ~ .*. + I(Fare^2) + I(Age^2), 
+log_mod1 <- train(Survived ~ ., 
                   data = train %>% select(-PassengerId), 
                   preProcess = c("center", "scale"),
                   trControl = my_trControl, 
@@ -246,7 +318,7 @@ log_mod1
 
 set.seed(15213)
 
-log_mod2 <- train(Survived ~ Pclass + Sex + Age + SibSp, 
+log_mod2 <- train(Survived ~ Pclass + Sex + Age + is.child, 
                   data = train %>% select(-PassengerId), 
                   trControl = my_trControl, 
                   method = "glm", 
@@ -258,21 +330,21 @@ log_mod2
 
 ```
 
+Now, let's try using elastic net regression.
+
+### Elastic Net
+
 ```{r}
 
-#| label: log_mod3
+#| label: enet_mod1
 
 set.seed(15213)
 
-log_mod3 <- train(Survived ~ Pclass + Sex + Age + SibSp*Parch, 
-                  data = train %>% select(-PassengerId), 
-                  trControl = my_trControl, 
-                  method = "glm", 
-                  family = binomial(link = "logit"),
-                  metric = "Accuracy")
-
-summary(log_mod3)
-log_mod3
+enet_mod1 <- train(Survived ~ ., 
+                   data = train %>% select(-PassengerId), 
+                   trControl = my_trControl, 
+                   method = "glmnet", 
+                   metric = "Accuracy")
 
 ```
 
@@ -286,19 +358,16 @@ Now, let's try using neural networks.
 
 set.seed(15213)
 
-nnet_mod1 <- train(Survived ~ Pclass + Sex + Age + SibSp, 
+nnet_mod1 <- train(Survived ~ ., 
                    data = train %>% select(-PassengerId), 
                    preProcess = c("center", "scale"),
                    trControl = my_trControl, 
                    method = "nnet", 
                    metric = "Accuracy")
 
-summary(nnet_mod1)
-nnet_mod1
-
 ```
 
-The neural network did not result in a substantial increase in cross validated accuracy. Next, let's try xgBoost.
+Next, let's try xgBoost.
 
 ### xgBoost
 
@@ -308,30 +377,46 @@ The neural network did not result in a substantial increase in cross validated a
 
 set.seed(15213)
 
-xgbTree_mod1 <- train(Survived ~ .*., 
+xgbTree_mod1 <- train(Survived ~ ., 
                       data = train %>% select(-PassengerId), 
                       preProcess = c("center", "scale"),
                       trControl = my_trControl, 
                       method = "xgbTree", 
                       metric = "Accuracy")
 
-summary(xgbTree_mod1)
-xgbTree_mod1
-
 ```
+
+Finally, let's compare all of our models and choose the best one for predictions on the test set. 
+
+```{r}
+#| label: model comparison
+
+model_comparison <- resamples(list(full_logistic = log_mod1, 
+                                   partial_logistic = log_mod2, 
+                                   elastic_net = enet_mod1,
+                                   neural_network = nnet_mod1, 
+                                   xgboost_tree = xgbTree_mod1))
+                                   
+  
+dotplot(model_comparison, metric = 'Accuracy')
+```
+
+The xgbTree model performed best, as according to cross validated accuracy. However, if we consider the one-standard-error rule (which argues that we should select the simplest model within one standard error of the best), we might choose the partial logistic model (i.e., the one that includes a subset of only significant predictors). Therefore, we will use partial_logistic for our final predictions.
+
+NOTE: this might seem stupid, but I made submissions for each of the five models, and partial_logistic ended up being best!
 
 ### Predictions
 
-```{r log_mod1 predictions}
+```{r log_mod2 predictions}
 
-#| label: log_mod1 predictions
+#| label: log_mod2 predictions
 
-pred_log_mod1 <- predict(log_mod1, newdata = test, type = "prob")
+pred_log_mod2 <- predict(log_mod2, newdata = test, type = "prob")
 
 log_output <- 
   tibble(
     PassengerId = test$PassengerId,
-    Survived = ifelse(pred_log_mod1$yes < 0.5, 0, 1)
+    Survived = ifelse(pred_log_mod2$yes < 0.5, 0, 1)
 )
   
   
@@ -371,6 +456,6 @@ xgbTree_output <-
 
 #| label: write_csv
 
-write.csv(xgbTree_output, file = "/Users/nick/Documents/Data Science/Kaggle/Project 1 - Titanic/titanic_predictions.csv", row.names = FALSE)
+write.csv(log_output, file = "titanic_predictions.csv", row.names = FALSE)
 
 ```
