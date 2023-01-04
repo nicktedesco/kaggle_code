@@ -2,7 +2,7 @@
 title: "Project 1 - Titanic"
 author: "Nick Tedesco"
 date: "2022-12-18"
-output: html_document
+output: github_document
 ---
 
 ```{r setup, include=FALSE}
@@ -11,35 +11,29 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Package and Data Loading
 
-```{r}
-
+```{r, include = FALSE}
 #| label: packages
 
 library(tidyverse)
 library(caret)
 library(dplyr)
 library(ggplot2)
-
 ```
 
 ```{r}
-
 #| label: train data
 
 train <- read.csv('train.csv', na = "")
 
 glimpse(train)
-
 ```
 
 ```{r}
-
 #| label: test data
 
 test <- read.csv('test.csv', na = "")
 
 glimpse(test)
-
 ```
 
 Our initial inspection of the data reveals a few interesting points...
@@ -54,7 +48,6 @@ Let's start by preprocessing our data. This will include dealing with missing va
 We'll start by joining our training and testing data for joint preprocessing, and dropping the ticket variable. 
 
 ```{r}
-
 #| label: train test join
 
 ## define train/test identification variable
@@ -66,15 +59,12 @@ train.Y <- train$Survived
 train <- train %>% select(-Survived)
 
 data <- rbind(train, test)
-
 ```
 
 ```{r}
-
 #| label: remove ticket variable
 
 data <- data %>% select(-Ticket)
-
 ```
 
 ### Missing Values
@@ -82,11 +72,9 @@ data <- data %>% select(-Ticket)
 Next, let's take a look at the distribution of missing values. 
 
 ```{r}
-
 #| label: missing values
 
 colSums(is.na(data)) / nrow(data)
-
 ```
 
 The proportion of missing values for Cabin is too high for imputation, so we will simply remove this variable. 
@@ -186,6 +174,8 @@ colSums(is.na(data)) / nrow(data)
 Next, we will check our continuous variables (Age, Fare) for any potential outliers.
 
 ```{r}
+#| label: check for outliers
+
 data |> 
   pivot_longer(cols = c(Age, Fare), names_to = "Column") |> 
   ggplot() + 
@@ -248,7 +238,6 @@ data <- data |>
 Finally, let's drop the variables we aren't interested in anymore, factorize any relevant variables, and split the data back into the training and testing sets. We also have to make sure that our outcome variable isn't numeric. 
 
 ```{r}
-
 #| label: final preprocessing
 
 ## first, drop variables we aren't interested in anymore
@@ -273,7 +262,6 @@ test <- data[data$train == "no", ] |>
 ## make sure outcome variable isn't numeric
 train <- train |> 
   mutate(Survived = ifelse(Survived == 1, "yes", "no"))
-
 ```
 
 Now we're ready to move onto modeling.
@@ -283,11 +271,9 @@ Now we're ready to move onto modeling.
 First, let's define our resampling scheme.
 
 ```{r}
-
 #| label: my_trControl
 
 my_trControl <- trainControl(method = "repeatedcv", number = 5, repeats = 2)
-
 ```
 
 We will begin by fitting a few different logistic regression models. 
@@ -295,7 +281,6 @@ We will begin by fitting a few different logistic regression models.
 ### Logistic Regression
 
 ```{r}
-
 #| label: log_mod1
 
 set.seed(15213)
@@ -310,11 +295,9 @@ log_mod1 <- train(Survived ~ .,
 
 summary(log_mod1)
 log_mod1
-
 ```
 
 ```{r}
-
 #| label: log_mod2
 
 set.seed(15213)
@@ -328,7 +311,6 @@ log_mod2 <- train(Survived ~ Pclass + Sex + Age + is.child,
 
 summary(log_mod2)
 log_mod2
-
 ```
 
 
@@ -337,7 +319,6 @@ Now, let's try using elastic net regression.
 ### Elastic Net
 
 ```{r}
-
 #| label: enet_mod1
 
 set.seed(15213)
@@ -347,7 +328,6 @@ enet_mod1 <- train(Survived ~ .,
                    trControl = my_trControl, 
                    method = "glmnet", 
                    metric = "Accuracy")
-
 ```
 
 Now, let's try using neural networks.
@@ -355,7 +335,6 @@ Now, let's try using neural networks.
 ### Neural Networks
 
 ```{r}
-
 #| label: nnet_mod1
 
 set.seed(15213)
@@ -365,8 +344,8 @@ nnet_mod1 <- train(Survived ~ .,
                    preProcess = c("center", "scale"),
                    trControl = my_trControl, 
                    method = "nnet", 
-                   metric = "Accuracy")
-
+                   metric = "Accuracy", 
+                   trace = FALSE)
 ```
 
 Next, let's try xgBoost.
@@ -374,7 +353,6 @@ Next, let's try xgBoost.
 ### xgBoost
 
 ```{r}
-
 #| label: xgbTree_mod1
 
 set.seed(15213)
@@ -384,8 +362,8 @@ xgbTree_mod1 <- train(Survived ~ .,
                       preProcess = c("center", "scale"),
                       trControl = my_trControl, 
                       method = "xgbTree", 
-                      metric = "Accuracy")
-
+                      metric = "Accuracy", 
+                      verbosity = 0)
 ```
 
 Finally, let's compare all of our models and choose the best one for predictions on the test set. 
@@ -410,7 +388,6 @@ NOTE: I submitted predictions for all of the model types, and the partial logist
 ### Predictions
 
 ```{r}
-
 #| label: log_mod2 predictions
 
 pred_log_mod2 <- predict(log_mod2, newdata = test, type = "prob")
@@ -420,12 +397,9 @@ log_output <-
     PassengerId = test$PassengerId,
     Survived = ifelse(pred_log_mod2$yes < 0.5, 0, 1)
 )
-  
-  
 ```
 
 ```{r}
-
 #| label: nnet_mod1 predictions
 
 pred_nnet_mod1 <- predict(nnet_mod1, newdata = test, type = "prob")
@@ -435,12 +409,9 @@ nnet_output <-
     PassengerId = test$PassengerId,
     Survived = ifelse(pred_nnet_mod1$yes < 0.5, 0, 1)
 )
-  
-  
 ```
 
 ```{r}
-
 #| label: xgbTree_mod1 predictions
 
 pred_xgbTree_mod1 <- predict(xgbTree_mod1, newdata = test, type = "prob")
@@ -450,14 +421,10 @@ xgbTree_output <-
     PassengerId = test$PassengerId,
     Survived = ifelse(pred_xgbTree_mod1$yes < 0.5, 0, 1)
 )
-  
-  
 ```
 
 ```{r}
-
 #| label: write_csv
 
 write.csv(log_output, file = "titanic_predictions.csv", row.names = FALSE)
-
 ```

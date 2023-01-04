@@ -6,8 +6,6 @@ Nick Tedesco
 ## Package and Data Loading
 
 ``` r
-#| label: train data
-
 train <- read.csv('train.csv', na = "")
 
 glimpse(train)
@@ -29,8 +27,6 @@ glimpse(train)
     ## $ Embarked    <chr> "S", "C", "S", "S", "S", "Q", "S", "S", "S", "C", "S", "S"…
 
 ``` r
-#| label: test data
-
 test <- read.csv('test.csv', na = "")
 
 glimpse(test)
@@ -66,8 +62,6 @@ We’ll start by joining our training and testing data for joint
 preprocessing, and dropping the ticket variable.
 
 ``` r
-#| label: train test join
-
 ## define train/test identification variable
 train$train <- "yes"
 test$train <- "no"
@@ -80,8 +74,6 @@ data <- rbind(train, test)
 ```
 
 ``` r
-#| label: remove ticket variable
-
 data <- data %>% select(-Ticket)
 ```
 
@@ -90,8 +82,6 @@ data <- data %>% select(-Ticket)
 Next, let’s take a look at the distribution of missing values.
 
 ``` r
-#| label: missing values
-
 colSums(is.na(data)) / nrow(data)
 ```
 
@@ -225,7 +215,7 @@ data |>
   facet_wrap(~Column, scales = "free")
 ```
 
-![](project1_titanic_files/figure-gfm/unnamed-chunk-14-1.png)<!-- -->
+![](project1_titanic_files/figure-gfm/check%20for%20outliers-1.png)<!-- -->
 
 It looks like we don’t have any crazy outliers for Age, but we do have a
 single obvious outlier for Fare that should be removed. In order to drop
@@ -289,8 +279,6 @@ training and testing sets. We also have to make sure that our outcome
 variable isn’t numeric.
 
 ``` r
-#| label: final preprocessing
-
 ## first, drop variables we aren't interested in anymore
 data <- data |> 
   select(-c(Name, SibSp, Parch, Title, family.size))
@@ -322,8 +310,6 @@ Now we’re ready to move onto modeling.
 First, let’s define our resampling scheme.
 
 ``` r
-#| label: my_trControl
-
 my_trControl <- trainControl(method = "repeatedcv", number = 5, repeats = 2)
 ```
 
@@ -332,8 +318,6 @@ We will begin by fitting a few different logistic regression models.
 ### Logistic Regression
 
 ``` r
-#| label: log_mod1
-
 set.seed(15213)
 
 log_mod1 <- train(Survived ~ ., 
@@ -399,8 +383,6 @@ log_mod1
     ##   0.8064951  0.5837674
 
 ``` r
-#| label: log_mod2
-
 set.seed(15213)
 
 log_mod2 <- train(Survived ~ Pclass + Sex + Age + is.child, 
@@ -463,8 +445,6 @@ Now, let’s try using elastic net regression.
 ### Elastic Net
 
 ``` r
-#| label: enet_mod1
-
 set.seed(15213)
 
 enet_mod1 <- train(Survived ~ ., 
@@ -479,8 +459,6 @@ Now, let’s try using neural networks.
 ### Neural Networks
 
 ``` r
-#| label: nnet_mod1
-
 set.seed(15213)
 
 nnet_mod1 <- train(Survived ~ ., 
@@ -497,8 +475,6 @@ Next, let’s try xgBoost.
 ### xgBoost
 
 ``` r
-#| label: xgbTree_mod1
-
 set.seed(15213)
 
 xgbTree_mod1 <- train(Survived ~ ., 
@@ -535,8 +511,6 @@ partial logistic model ended up performing best!
 ### Predictions
 
 ``` r
-#| label: log_mod2 predictions
-
 pred_log_mod2 <- predict(log_mod2, newdata = test, type = "prob")
 
 log_output <- 
@@ -547,8 +521,6 @@ log_output <-
 ```
 
 ``` r
-#| label: nnet_mod1 predictions
-
 pred_nnet_mod1 <- predict(nnet_mod1, newdata = test, type = "prob")
 
 nnet_output <- 
@@ -559,8 +531,6 @@ nnet_output <-
 ```
 
 ``` r
-#| label: xgbTree_mod1 predictions
-
 pred_xgbTree_mod1 <- predict(xgbTree_mod1, newdata = test, type = "prob")
 
 xgbTree_output <- 
@@ -571,7 +541,5 @@ xgbTree_output <-
 ```
 
 ``` r
-#| label: write_csv
-
 write.csv(log_output, file = "titanic_predictions.csv", row.names = FALSE)
 ```
